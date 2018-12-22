@@ -43,6 +43,17 @@ IS_PY2 = sys.version_info[0] == 2
 
 
 def shprint(command, *args, **kwargs):
+    """Run a sh command printing its output to stdout
+
+    Output consists of both STDERR and STDOUT, is line buffered,
+    and is squashed to ASCII.
+
+    Parameters
+    ----------
+    command: sh.Command object
+        command to be run
+    args, kwargs: arguments to `command`
+    """
     kwargs["_iter"] = True
     kwargs["_out_bufsize"] = 1
     kwargs["_err_to_out"] = True
@@ -51,6 +62,11 @@ def shprint(command, *args, **kwargs):
 
 
 def cache_execution(f):
+    """Decorator to cache the execution of a function
+
+    Note: the `force` kwarg may be passed to the wrapped function.
+    if force is True, function is executed. Otherwise, it is executed only once.
+    """
     def _cache_execution(self, *args, **kwargs):
         state = self.ctx.state
         key = "{}.{}".format(self.name, f.__name__)
@@ -67,6 +83,7 @@ def cache_execution(f):
     return _cache_execution
 
 class ChromeDownloader(FancyURLopener):
+    """Masquerade as a useful user-agent"""
     version = (
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
         '(KHTML, like Gecko) Chrome/28.0.1500.71 Safari/537.36')
@@ -75,7 +92,9 @@ urlretrieve = ChromeDownloader().retrieve
 
 
 class JsonStore(object):
-    """Replacement of shelve using json, needed for support python 2 and 3.
+    """A Persistent store for JSON-serializable objcts.
+
+    This is essentially "shelve" using json, needed to support both python 2 and 3.
     """
 
     def __init__(self, filename):
@@ -126,6 +145,16 @@ class JsonStore(object):
                 fd.write(unicode(json.dumps(self.data, ensure_ascii=False)))
 
 class Arch(object):
+    """Stores architecture/ build information for building ios projects
+
+    Must be attached to a Context object
+
+    sdk:
+    arch:
+    triple:
+    version_min:
+    sysroot:
+    """
     def __init__(self, ctx):
         super(Arch, self).__init__()
         self.ctx = ctx
@@ -144,6 +173,10 @@ class Arch(object):
 
 
     def get_env(self):
+        """
+        Build an environment dictionary from the current context/arch
+
+        """
         include_dirs = [
             "-I{}/{}".format(
                 self.ctx.include_dir,
@@ -242,13 +275,20 @@ class Arch64IOS(Arch):
 
 
 class Graph(object):
-    # Taken from python-for-android/depsort
+    """Represent a dependency graph
+
+    a graph is basically a dict maping packages the set of their dependencies
+
+    Taken from python-for-android/depsort
+    """
     def __init__(self):
         # `graph`: dict that maps each package to a set of its dependencies.
         self.graph = {}
 
     def add(self, dependent, dependency):
-        """Add a dependency relationship to the graph"""
+        """Add a dependency relationship to the graph
+
+        Leaf nodes may be added by setting dependency==dependant"""
         self.graph.setdefault(dependent, set())
         self.graph.setdefault(dependency, set())
         if dependent != dependency:
@@ -286,6 +326,28 @@ class Graph(object):
 
 
 class Context(object):
+    """Encapsulate information about the compiling (host) platform.
+
+    The Context compiles path, hardware, sdk, state, and dependency information
+
+    The the (persistent) state of the builds is stored as a JsonStore:
+        `{dist_dir}/state.db`
+
+    The following (mandatory) dependencies must be in the shell path:
+        cython
+        pkg-config
+        autoconf
+        automake
+        libtool
+
+    The following (optional) dependencies are used if they are found in the shell path:
+        ccache: C/C++ Compiler caching tool
+        pigz: Parallel gzip
+        pbzip2: parallel bzip2
+
+
+
+"""
     env = environ.copy()
     root_dir = None
     cache_dir = None
@@ -299,6 +361,7 @@ class Context(object):
     so_suffix = None  # set by one of the hostpython
 
     def __init__(self):
+        """Check Dependencies, create directories, and capture SDK information"""
         super(Context, self).__init__()
         self.include_dirs = []
 
@@ -366,8 +429,8 @@ class Context(object):
         if not ok:
             sys.exit(1)
 
-        self.use_pigz = sh.which('pigz')
-        self.use_pbzip2 = sh.which('pbzip2')
+        self.use_pigz = sh.which('pigz')  # Parallel gzip
+        self.use_pbzip2 = sh.which('pbzip2')  # Parallel bzip2
 
         try:
             num_cores = int(sh.sysctl('-n', 'hw.ncpu'))
@@ -493,6 +556,14 @@ class Recipe(object):
     def extract_file(self, filename, cwd):
         """
         Extract the `filename` into the directory `cwd`.
+
+        Handles the following filetypes:
+            gzip {".tgz", ".tar.gz"}:
+                If pigz is installed (ctx.use_pigz is set), uses multicore gzip
+            bzip2 {".tbz2", "tar.bz2"}
+                If pbzip2 is installed (ctx.use_pbzip2 is set), uses multicore bzip
+            zip: {".zip"}
+                zip format. Requires having an `unzip` binary in the current path.
         """
         if not filename:
             return
@@ -520,6 +591,8 @@ class Recipe(object):
             raise Exception()
 
     def get_archive_rootdir(self, filename):
+        """Get the root directory for an archive
+        works with tar+gzip, tar+bzip2, and zip files"""
         if filename.endswith(".tgz") or filename.endswith(".tar.gz") or \
                 filename.endswith(".tbz2") or filename.endswith(".tar.bz2"):
             try:
@@ -702,6 +775,7 @@ class Recipe(object):
         return value
 
     def execute(self):
+        """Do the download/extract/build process for this recipe"""
         if self.custom_dir:
             self.ctx.state.remove_all(self.name)
         self.download()
@@ -729,6 +803,7 @@ class Recipe(object):
 
     @cache_execution
     def download(self):
+        """Perform the download step for this Recipe"""
         key = "{}.archive_root".format(self.name)
         if self.custom_dir:
             self.ctx.state[key] = basename(self.custom_dir)
@@ -746,6 +821,11 @@ class Recipe(object):
 
     @cache_execution
     def extract(self):
+        """Perform the 'extract' step for this Recipe
+
+        Extracts a version of this Recipe for each architecture we will
+        be building.
+        """
         # recipe tmp directory
         for arch in self.filtered_archs:
             print("Extract {} for {}".format(self.name, arch.arch))
@@ -770,6 +850,13 @@ class Recipe(object):
 
     @cache_execution
     def build(self, arch):
+        """Build the Recipe for the indicated architecture.
+
+        This invokes the prebuild, build, and postbuild functions
+        for the indicated `arch`
+
+        If existing build was interrupted, blow away the build dir and start again.
+        """
         self.build_dir = self.get_build_dir(arch.arch)
         if self.has_marker("building"):
             print("Warning: {} build for {} has been incomplete".format(
@@ -809,6 +896,17 @@ class Recipe(object):
 
     @cache_execution
     def build_all(self):
+        """Build this recipe for all architectures
+
+        Steps:
+
+        1. If a library build the static fat library (lipo) file
+        2. Install includes
+        3. Install frameworks
+        4. Install (python) sources
+        5. Install the binary
+
+        """
         filtered_archs = self.filtered_archs
         print("Build {} for {} (filtered)".format(
             self.name,
@@ -842,16 +940,19 @@ class Recipe(object):
         self.install()
 
     def prebuild_arch(self, arch):
+        """Execute the prebuild function for a specific `arch`"""
         prebuild = "prebuild_{}".format(arch.arch)
         if hasattr(self, prebuild):
             getattr(self, prebuild)()
 
     def build_arch(self, arch):
+        """Execute the build function for a specific `arch`"""
         build = "build_{}".format(arch.arch)
         if hasattr(self, build):
             getattr(self, build)()
 
     def postbuild_arch(self, arch):
+        """Execute the postbuild function for a specific `arch`"""
         postbuild = "postbuild_{}".format(arch.arch)
         if hasattr(self, postbuild):
             getattr(self, postbuild)()
@@ -867,6 +968,7 @@ class Recipe(object):
 
     @cache_execution
     def make_lipo(self, filename, library=None):
+        """Run the `lipo` tool to create a fat library"""
         if library is None:
             library = self.library
         if not library:
@@ -881,6 +983,7 @@ class Recipe(object):
 
     @cache_execution
     def install_frameworks(self):
+        """Install frameworks into build dir"""
         if not self.frameworks:
             return
         arch = self.filtered_archs[0]
@@ -896,6 +999,7 @@ class Recipe(object):
 
     @cache_execution
     def install_sources(self):
+        """Copy sources into build dir"""
         if not self.sources:
             return
         arch = self.filtered_archs[0]
@@ -911,6 +1015,11 @@ class Recipe(object):
 
     @cache_execution
     def install_include(self):
+        """Copy Include files into build dir
+
+        These may be per-architecture includes, or common
+        includes (indicated via `self.include_per_arch`)
+        """
         if not self.include_dir:
             return
         if self.include_per_arch:
@@ -1091,7 +1200,17 @@ class CythonRecipe(PythonRecipe):
 
 
 def build_recipes(names, ctx):
-    # gather all the dependencies
+    """Build Recipes using the supplied build context
+
+    Given a list of recipe names, build them using the supplied build context.
+
+    First build a dependency graph, in order to determine the a build order.
+    XXX Optional Dependencies - no idea what this does
+
+    Next, initialize build contexts and build the recipes
+
+    """
+    # Build the dependency graph
     print("Want to build {}".format(names))
     graph = Graph()
     ctx.wanted_recipes = names[:]
@@ -1113,10 +1232,11 @@ def build_recipes(names, ctx):
             graph.add(name, depend)
             recipe_to_load += recipe.depends
         for depend in recipe.optional_depends:
-            # in case of compilation after the initial one, take in account
+            # in case of compilation after the initial one
+            # (i.e. '{recipe}.build_all' is True), take in account
             # of the already compiled recipes
             key = "{}.build_all".format(depend)
-            if key in ctx.state:
+            if key in ctx.state:  # alreday built. Use it!
                 recipe_to_load.append(name)
                 graph.add(name, depend)
             else:
@@ -1125,8 +1245,8 @@ def build_recipes(names, ctx):
 
     build_order = list(graph.find_order())
     print("Build order is {}".format(build_order))
-    recipes = [Recipe.get_recipe(name, ctx) for name in build_order]
-    recipes = [recipe for recipe in recipes if not recipe.is_alias]
+    recipes = [Recipe.get_recipe(name, ctx) for name in build_order] # respect order
+    recipes = [recipe for recipe in recipes if not recipe.is_alias]  # skip aliases
     recipes_order = [recipe.name for recipe in recipes]
     print("Recipe order is {}".format(recipes_order))
     for recipe in recipes:
@@ -1136,6 +1256,7 @@ def build_recipes(names, ctx):
 
 
 def ensure_dir(filename):
+    """Create a directory, if necessary"""
     if not exists(filename):
         makedirs(filename)
 
