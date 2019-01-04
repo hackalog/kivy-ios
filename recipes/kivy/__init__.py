@@ -3,8 +3,8 @@ from os.path import join
 
 
 class KivyRecipe(CythonRecipe):
-    version = "1.10.1"
-    url = "https://github.com/kivy/kivy/archive/{version}.zip"
+    version = "llf_v1.10.1"
+    url = "https://github.com/learnleapfly/kivy/archive/{version}.zip"
     library = "libkivy.a"
     depends = ["sdl2", "sdl2_image", "sdl2_mixer", "sdl2_ttf", "ios",
                "pyobjus", "python"]

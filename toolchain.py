@@ -427,6 +427,7 @@ class Recipe(object):
         "is_alias": False,
         "version": None,
         "url": None,
+        "repo": None,
         "archs": [],
         "depends": [],
         "optional_depends": [],
@@ -592,7 +593,7 @@ class Recipe(object):
 
     @property
     def archive_fn(self):
-        bfn = basename(self.url.format(version=self.version))
+        bfn = basename(self.url.format(version=self.version, repo=self.repo))
         fn = "{}/{}-{}".format(
             self.ctx.cache_dir,
             self.name, bfn)
@@ -724,7 +725,7 @@ class Recipe(object):
                 return
             fn = self.archive_fn
             if not exists(fn):
-                self.download_file(self.url.format(version=self.version), fn)
+                self.download_file(self.url.format(version=self.version, repo=self.repo), fn)
             status = self.get_archive_rootdir(self.archive_fn)
             if status is not None:
                 self.ctx.state[key] = status
