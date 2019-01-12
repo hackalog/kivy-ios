@@ -71,7 +71,7 @@ def cache_execution(f):
     def _cache_execution(self, *args, **kwargs):
         state = self.ctx.state
         key = "{}.{}".format(self.name, f.__name__)
-        force = kwargs.pop("force", False)
+        force = kwargs.pop("force", False) or getattr(self.ctx, "nocache", False)
         if args:
             for arg in args:
                 key += ".{}".format(arg)
@@ -756,11 +756,12 @@ class Recipe(object):
             self.ctx.state[key] = basename(self.custom_dir)
         else:
             src_dir = join(self.recipe_dir, self.url)
-            if exists(src_dir):
+            if exists(src_dir) and not self.ctx.nocache:
+                logger.info('{} exists. Skipping download'.format(src_dir))
                 self.ctx.state[key] = basename(src_dir)
                 return
             fn = self.archive_fn
-            if not exists(fn):
+            if not exists(fn) or self.ctx.nocache:
                 self.download_file(self.url.format(version=self.version, owner=self.owner), fn)
             status = self.get_archive_rootdir(self.archive_fn)
             if status is not None:
@@ -781,7 +782,8 @@ class Recipe(object):
                 shutil.rmtree(dest_dir)
             shutil.copytree(self.custom_dir, dest_dir)
         else:
-            if exists(dest_dir):
+            if exists(dest_dir) and not self.ctx.nocache:
+                logger.info("{} exists, skipping extract".format(dest_dir))
                 return
             src_dir = join(self.recipe_dir, self.url)
             if exists(src_dir):
@@ -800,7 +802,7 @@ class Recipe(object):
             shutil.rmtree(self.build_dir)
             self.extract_arch(arch.arch)
 
-        if self.has_marker("build_done"):
+        if self.has_marker("build_done") and not self.ctx.nocache:
             logger.info("Build python for {} already done.".format(arch.arch))
             return
 
@@ -1309,9 +1311,11 @@ Xcode:
             parser.add_argument("--stop", default=None, action="store",
                                 help="Stop execution after this phase of the build. "
                                 "one of {'fetch', 'extract', 'prebuild', 'build', 'postbuild', 'package', 'install'")
+            parser.add_argument("--force", default=False, action="store_true", help="if True, skip execution caching")
             args = parser.parse_args(sys.argv[2:])
 
             ctx.stop_after = args.stop
+            ctx.nocache = args.force
 
             if args.arch:
                 if len(args.arch) == 1:
