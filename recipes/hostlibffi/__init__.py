@@ -13,13 +13,13 @@ class LibffiRecipe(Recipe):
     include_dir = "build_{arch.sdk}-{arch.arch}/include"
     archs = ["x86_64"]
 
-    def build_all(self):
+    def build_all(self, stop_after=None):
         filtered_archs = self.filtered_archs
         logger.info("Build {} for {} (filtered)".format(
             self.name,
             ", ".join([x.arch for x in filtered_archs])))
         for arch in self.filtered_archs:
-            self.build(arch)
+            self.build(arch, stop_after=stop_after)
 
         # since we don't run cache_execution, call this here for `status`
         self.update_state("{}.build_all".format(self.name), True)

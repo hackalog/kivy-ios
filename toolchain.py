@@ -719,12 +719,16 @@ class Recipe(object):
                 self.ctx.state[key] = value
         return value
 
-    def execute(self):
+    def execute(self, stop_after=None):
         if self.custom_dir:
             self.ctx.state.remove_all(self.name)
         self.download()
+        if stop_after == 'fetch':
+            return
         self.extract()
-        self.build_all()
+        if stop_after == 'extract':
+            return
+        self.build_all(stop_after=stop_after)
 
     @property
     def custom_dir(self):
@@ -787,7 +791,7 @@ class Recipe(object):
             self.extract_file(self.archive_fn, build_dir)
 
     @cache_execution
-    def build(self, arch):
+    def build(self, arch, stop_after=None):
         self.build_dir = self.get_build_dir(arch.arch)
         if self.has_marker("building"):
             logger.warning("{} build for {} has been incomplete".format(
@@ -805,8 +809,12 @@ class Recipe(object):
         chdir(self.build_dir)
         logger.info("Prebuild {} for {}".format(self.name, arch.arch))
         self.prebuild_arch(arch)
+        if stop_after == "prebuild":
+            return
         logger.info("Build {} for {}".format(self.name, arch.arch))
         self.build_arch(arch)
+        if stop_after == "build":
+            return
         logger.info("Postbuild {} for {}".format(self.name, arch.arch))
         self.postbuild_arch(arch)
         self.delete_marker("building")
@@ -826,14 +834,16 @@ class Recipe(object):
         self.ctx.state[key_time] = str(datetime.utcnow())
 
     @cache_execution
-    def build_all(self):
+    def build_all(self, stop_after=None):
         filtered_archs = self.filtered_archs
         logger.info("Build {} for {} (filtered)".format(
             self.name,
             ", ".join([x.arch for x in filtered_archs])))
         for arch in self.filtered_archs:
-            self.build(arch)
+            self.build(arch, stop_after=stop_after)
 
+        if self.ctx.stop_after in ['prebuild', 'build', 'postbuild']:
+            return
         name = self.name
         if self.library:
             logger.info("Create lipo library for {}".format(name))
@@ -850,6 +860,8 @@ class Recipe(object):
                 ensure_dir(dirname(static_fn))
                 logger.info("  - Lipo-ize {}".format(library))
                 self.make_lipo(static_fn, library)
+        if stop_after == "package":
+            return
         logger.info("Install include files for {}".format(self.name))
         self.install_include()
         logger.info("Install frameworks for {}".format(self.name))
@@ -1157,7 +1169,7 @@ def build_recipes(names, ctx):
     for recipe in recipes:
         recipe.init_with_ctx(ctx)
     for recipe in recipes:
-        recipe.execute()
+        recipe.execute(stop_after=ctx.stop_after)
 
 
 def ensure_dir(filename):
@@ -1294,7 +1306,12 @@ Xcode:
                                 help="do not use pigz for gzip decompression")
             parser.add_argument("--no-pbzip2", action="store_true", default=not bool(ctx.use_pbzip2),
                                 help="do not use pbzip2 for bzip2 decompression")
+            parser.add_argument("--stop", default=None, action="store",
+                                help="Stop execution after this phase of the build. "
+                                "one of {'fetch', 'extract', 'prebuild', 'build', 'postbuild', 'package', 'install'")
             args = parser.parse_args(sys.argv[2:])
+
+            ctx.stop_after = args.stop
 
             if args.arch:
                 if len(args.arch) == 1:
