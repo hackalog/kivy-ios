@@ -126,11 +126,18 @@ class JsonStore(object):
     def keys(self):
         return self.data.keys()
 
-    def remove_all(self, prefix):
+    def remove_all(self, prefix=None, suffix=None):
+        if prefix is None and suffix is None:
+            return
         for key in tuple(self.data.keys()):
-            if not key.startswith(prefix):
-                continue
-            del self.data[key]
+            if prefix is not None:
+                if key.startswith(prefix):
+                    logger.debug("Deleting {} (prefix={})".format(key, prefix))
+                    del self.data[key]
+            elif suffix is not None:
+                if key.endswith(suffix):
+                    logger.debug("Deleting {} (suffix={})".format(key, suffix))
+                    del self.data[key]
         self.sync()
 
     def sync(self):
@@ -1367,7 +1374,10 @@ Xcode:
             parser = argparse.ArgumentParser(
                     description="Clean the build")
             parser.add_argument("recipe", nargs="*", help="Recipe to clean")
+            parser.add_argument("--cache", action="store_true", default=False, help="clear download cache")
             args = parser.parse_args(sys.argv[2:])
+            if args.cache and args.recipe:
+                logger.warning("Cannot specify both --cache and recipe name. --cache ignored")
             ctx = Context()
             if args.recipe:
                 for recipe in args.recipe:
@@ -1377,9 +1387,16 @@ Xcode:
                     if exists(build_dir):
                         shutil.rmtree(build_dir)
             else:
-                logger.info("Delete build directory")
-                if exists(ctx.build_dir):
-                    shutil.rmtree(ctx.build_dir)
+                if args.cache is True:
+                    if exists(ctx.cache_dir):
+                        logger.info("Clean download cache")
+                        shutil.rmtree(ctx.cache_dir)
+                        ctx.state.remove_all(suffix=".download")
+                        ctx.state.remove_all(suffix=".download.at")
+                else:
+                    logger.info("Delete build directory")
+                    if exists(ctx.build_dir):
+                        shutil.rmtree(ctx.build_dir)
 
         def distclean(self):
             parser = argparse.ArgumentParser(
